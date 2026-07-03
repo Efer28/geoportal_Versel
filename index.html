@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Geoportal AIC - Monitoreo H&iacute;drico</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<nav class="navbar">
+<div class="navbar-brand">
+<div class="logo">
+<svg viewBox="0 0 24 24" width="18" height="18" fill="#697A95">
+<path d="M12 2C10.34 5.66 6 11.32 6 15c0 3.31 2.69 6 6 6s6-2.69 6-6c0-3.68-4.34-9.34-6-13z"/>
+</svg>
+</div>
+<div>
+<div class="navbar-titulo">Geoportal <span class="aic-dest">AIC</span>-Monitoreo</div>
+<div class="navbar-sub">Sistema de Monitoreo H&iacute;drico</div>
+</div>
+</div>
+<div class="navbar-actions">
+<button class="nav-btn nav-btn-report" onclick="abrirModalReporte()">
+  + Nuevo Reporte
+</button>
+</div>
+</nav>
+
+<div class="main-container">
+<div class="sidebar">
+
+<div class="sidebar-card" style="flex:1">
+<h3>Capas</h3>
+<div id="listaCapas">
+<div class="capa-switch">
+<div class="capa-switch-info">
+<div class="ley-marca azul" style="display:inline-block;vertical-align:middle;margin-right:6px"></div>
+<div style="display:inline-block">
+<div class="capa-switch-nombre">Puntos monitoreo</div>
+</div>
+</div>
+<div class="switch activo" onclick="toggleCapa('Puntos monitoreo', this)"></div>
+</div>
+<div class="capa-switch">
+<div class="capa-switch-info">
+<div class="ley-marca ambar" style="display:inline-block;vertical-align:middle;margin-right:6px"></div>
+<div style="display:inline-block">
+<div class="capa-switch-nombre">Reportes de campo</div>
+</div>
+</div>
+<div class="switch activo" onclick="toggleCapa('Reportes de campo', this)"></div>
+</div>
+</div>
+</div>
+
+<div class="sidebar-card">
+<h3>&Uacute;ltimos reportes</h3>
+<div id="ultimosReportes" style="font-size:13px;color:var(--text-light)">Cargando...</div>
+</div>
+</div>
+
+<div class="map-wrapper">
+<div id="map"></div>
+<div id="leyendaMapa" class="info-leyenda"></div>
+</div>
+</div>
+
+<div id="modalReporte" class="modal-overlay">
+<div class="modal">
+<div class="modal-header">
+<h2><span>&#128202;</span> Reporte de campo</h2>
+<button class="modal-close" onclick="cerrarModalReporte()">&times;</button>
+</div>
+<div class="modal-body">
+
+<div class="paso-indicador">
+<div class="paso activo" id="paso1">1. Seleccionar punto</div>
+<div class="paso" id="paso2">2. Ingresar datos</div>
+</div>
+
+<div id="pasoSeleccion">
+<input class="buscador-puntos" id="buscadorPuntos" placeholder="Buscar punto de monitoreo..." oninput="filtrarPuntos()">
+<div class="lista-puntos" id="listaPuntos"></div>
+</div>
+
+<div id="pasoFormulario" style="display:none">
+<div id="puntoSeleccionadoInfo" class="punto-seleccionado-info"></div>
+<div class="form-grid" style="margin-top:16px">
+<div class="form-group">
+<label>Ox&iacute;geno Disuelto (mg/L)</label>
+<input type="number" id="campo_oxigeno" step="0.01" min="0" max="20" placeholder="0.00">
+</div>
+<div class="form-group">
+<label>Temperatura (&deg;C)</label>
+<input type="number" id="campo_temperatura" step="0.1" min="-10" max="50" placeholder="0.0">
+</div>
+<div class="form-group">
+<label>pH</label>
+<input type="number" id="campo_ph" step="0.01" min="0" max="14" placeholder="7.00">
+</div>
+<div class="form-group">
+<label>Conductividad (&micro;S/cm)</label>
+<input type="number" id="campo_conductividad" step="0.1" min="0" placeholder="0.0">
+</div>
+<div class="form-group">
+<label>Fecha</label>
+<input type="date" id="campo_fecha">
+</div>
+<div class="form-group">
+<label>Hora</label>
+<input type="time" id="campo_hora">
+</div>
+<div class="form-group full">
+<label>Observaciones</label>
+<textarea id="campo_observaciones" placeholder="Condiciones del entorno, color del agua, clima, etc."></textarea>
+</div>
+</div>
+<div class="form-actions">
+<button class="btn-cancel" onclick="volverSeleccionPunto()">Atr&aacute;s</button>
+<button class="btn-submit" onclick="guardarReporte()">Guardar Reporte</button>
+</div>
+</div>
+
+</div>
+</div>
+</div>
+
+<div class="footer">AIC &copy; 2026 &mdash; Sistema de Monitoreo H&iacute;drico</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

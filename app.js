@@ -1,0 +1,290 @@
+const map = L.map('map', {zoomControl: true}).setView([-1.5, -78.5], 7);
+
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution: '&copy; OpenStreetMap', maxZoom: 19});
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {attribution: '&copy; ESRI', maxZoom: 19});
+const ghyb = L.tileLayer('https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {attribution: 'Google', maxZoom: 20, subdomains: ['0','1','2','3']});
+const labels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {attribution: '&copy; ESRI', maxZoom: 19});
+
+const baseMaps = { "OpenStreetMap": osm, "Sat\u00e9lite (ESRI)": sat, "Google Hybrid": ghyb };
+const overlays = { "Puntos monitoreo": L.featureGroup().addTo(map), "Reportes de campo": L.featureGroup().addTo(map) };
+
+sat.addTo(map);
+labels.addTo(map);
+
+let controlCapas = L.control.layers(baseMaps, null, {collapsed: false, position: 'topright'}).addTo(map);
+actualizarLeyenda();
+
+function toggleCapa(nombre, el) {
+  const grupo = overlays[nombre];
+  if (!grupo) return;
+  if (map.hasLayer(grupo)) {
+    map.removeLayer(grupo);
+    el.classList.remove('activo');
+  } else {
+    map.addLayer(grupo);
+    el.classList.add('activo');
+  }
+  actualizarLeyenda();
+}
+
+function actualizarLeyenda() {
+  const div = document.getElementById('leyendaMapa');
+  const items = [];
+  if (map.hasLayer(overlays["Puntos monitoreo"]))
+    items.push('<div class="ley-item"><div class="ley-marca azul"></div>Puntos monitoreo</div>');
+  if (map.hasLayer(overlays["Reportes de campo"]))
+    items.push('<div class="ley-item"><div class="ley-marca ambar"></div>Reportes de campo</div>');
+
+  if (items.length === 0) {
+    div.classList.remove('visible');
+    return;
+  }
+  div.innerHTML = '<h4>Capas activas</h4>' + items.join('');
+  div.classList.add('visible');
+}
+
+let puntosMonitoreo = [];
+let puntoSeleccionado = null;
+let marcadorSeleccion = null;
+
+function mostrarToast(msg, tipo){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + tipo + ' visible';
+  setTimeout(() => t.className = 'toast', 3500);
+}
+
+async function api(path, options = {}) {
+  let url = '/api/supabase?path=' + encodeURIComponent(path);
+  const fetchOptions = { headers: { 'Content-Type': 'application/json' } };
+
+  if (options.method && options.method !== 'GET') {
+    fetchOptions.method = options.method;
+    fetchOptions.body = JSON.stringify(options.body);
+  }
+
+  const res = await fetch(url, fetchOptions);
+  if (!res.ok) throw new Error('Error: ' + res.status);
+  try { return await res.json() } catch { return null }
+}
+
+async function cargarPuntosMonitoreo(){
+  try {
+    const datos = await api('p_monitoreo?select=*&limit=100');
+    puntosMonitoreo = datos;
+    const grupo = overlays["Puntos monitoreo"];
+    grupo.clearLayers();
+    if(datos.length === 0) return;
+
+    const features = datos.map(p => {
+      let coords = null;
+      if(p.geom && p.geom.coordinates) coords = p.geom.coordinates;
+      return {
+        type: 'Feature',
+        properties: p,
+        geometry: coords ? {type:'Point', coordinates:[coords[0], coords[1]]} : null
+      };
+    }).filter(f => f.geometry);
+
+    L.geoJSON({type:'FeatureCollection', features}, {
+      pointToLayer: function(f, ll){
+        return L.circleMarker(ll, {
+          radius: 9, fillColor: '#b3e0ff', color: '#5b9bd5',
+          weight: 3, fillOpacity: 0.85, className: 'marcador-monitoreo'
+        });
+      },
+      onEachFeature: function(f, layer){
+        const p = f.properties;
+        layer.bindPopup('<b>' + p.name + '</b><br>Elev: ' + (p.elevation ? p.elevation.toFixed(1) + ' m' : 'N/D') + '<br>' + p.date_obs + ' ' + p.time_obs);
+        layer.on('click', function(){ abrirModalReporteConPunto(p); });
+      }
+    }).addTo(grupo);
+
+    map.fitBounds(grupo.getBounds().pad(0.1));
+  } catch(e){
+    console.error('Error al cargar p_monitoreo:', e);
+  }
+}
+
+function abrirModalReporte(){
+  puntoSeleccionado = null;
+  document.getElementById('paso1').className = 'paso activo';
+  document.getElementById('paso2').className = 'paso';
+  document.getElementById('pasoSeleccion').style.display = 'block';
+  document.getElementById('pasoFormulario').style.display = 'none';
+  document.getElementById('modalReporte').classList.add('active');
+  mostrarListaPuntos();
+}
+
+function abrirModalReporteConPunto(punto){
+  puntoSeleccionado = punto;
+  document.getElementById('modalReporte').classList.add('active');
+  avanzarAFormulario();
+}
+
+function cerrarModalReporte(){
+  document.getElementById('modalReporte').classList.remove('active');
+  puntoSeleccionado = null;
+  ['campo_oxigeno','campo_temperatura','campo_ph','campo_conductividad','campo_observaciones','campo_fecha','campo_hora','buscadorPuntos'].forEach(id => document.getElementById(id).value = '');
+  if(marcadorSeleccion){ map.removeLayer(marcadorSeleccion); marcadorSeleccion = null }
+}
+
+function mostrarListaPuntos(){
+  const lista = document.getElementById('listaPuntos');
+  const filtro = document.getElementById('buscadorPuntos').value.toLowerCase();
+  const filtrados = puntosMonitoreo.filter(p =>
+    (p.name || '').toLowerCase().includes(filtro) || (p.gid && String(p.gid).includes(filtro))
+  );
+  if(filtrados.length === 0){
+    lista.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-light)">No se encontraron puntos</div>';
+    return;
+  }
+  lista.innerHTML = filtrados.map(p => {
+    const coords = p.geom && p.geom.coordinates;
+    const sel = puntoSeleccionado && p.gid === puntoSeleccionado.gid;
+    return '<div class="punto-item' + (sel ? ' seleccionado' : '') + '" onclick="seleccionarPunto(' + p.gid + ')">' +
+      '<div class="punto-icono">' + (p.name ? p.name.slice(0,2) : '?') + '</div>' +
+      '<div class="punto-info"><div class="punto-nombre">' + (p.name || 'Sin nombre') + '</div>' +
+      '<div class="punto-coords">' + (coords ? coords[1].toFixed(5) + ', ' + coords[0].toFixed(5) : '') + '</div>' +
+      '<div class="punto-fecha">' + (p.date_obs || '') + ' ' + (p.time_obs || '') + '</div></div>' +
+      '<div class="punto-check">' + (sel ? '\u2713' : '') + '</div></div>';
+  }).join('');
+}
+
+function filtrarPuntos(){ mostrarListaPuntos() }
+
+function seleccionarPunto(gid){
+  puntoSeleccionado = puntosMonitoreo.find(p => p.gid === gid);
+  if(!puntoSeleccionado) return;
+  mostrarListaPuntos();
+  avanzarAFormulario();
+}
+
+function avanzarAFormulario(){
+  if(!puntoSeleccionado) return;
+  document.getElementById('paso1').className = 'paso completado';
+  document.getElementById('paso2').className = 'paso activo';
+  document.getElementById('pasoSeleccion').style.display = 'none';
+  document.getElementById('pasoFormulario').style.display = 'block';
+
+  const coords = puntoSeleccionado.geom && puntoSeleccionado.geom.coordinates;
+  const lat = coords ? coords[1] : null;
+  const lon = coords ? coords[0] : null;
+
+  document.getElementById('puntoSeleccionadoInfo').innerHTML =
+    '<b>' + puntoSeleccionado.name + '</b> &mdash; ' +
+    (lat ? lat.toFixed(5) + ', ' + lon.toFixed(5) : '') +
+    ' &nbsp;|&nbsp; Elev: ' + (puntoSeleccionado.elevation ? puntoSeleccionado.elevation.toFixed(1) + ' m' : 'N/D');
+
+  const ahora = new Date();
+  document.getElementById('campo_fecha').value = ahora.toISOString().slice(0,10);
+  document.getElementById('campo_hora').value = ahora.toTimeString().slice(0,5);
+
+  if(lat && lon){
+    if(marcadorSeleccion) map.removeLayer(marcadorSeleccion);
+    marcadorSeleccion = L.circleMarker([lat, lon], {
+      radius: 10, fillColor: '#f59e0b', color: '#d97706',
+      weight: 3, fillOpacity: 0.8
+    }).addTo(map);
+    map.setView([lat, lon], 16);
+  }
+}
+
+function volverSeleccionPunto(){
+  document.getElementById('paso1').className = 'paso activo';
+  document.getElementById('paso2').className = 'paso';
+  document.getElementById('pasoSeleccion').style.display = 'block';
+  document.getElementById('pasoFormulario').style.display = 'none';
+  if(marcadorSeleccion){ map.removeLayer(marcadorSeleccion); marcadorSeleccion = null }
+}
+
+async function guardarReporte(){
+  if(!puntoSeleccionado){ mostrarToast('Selecciona un punto de monitoreo', 'error'); return; }
+
+  const oxigeno = parseFloat(document.getElementById('campo_oxigeno').value);
+  const temperatura = parseFloat(document.getElementById('campo_temperatura').value);
+  const ph = parseFloat(document.getElementById('campo_ph').value);
+  const conductividad = parseFloat(document.getElementById('campo_conductividad').value);
+  const observaciones = document.getElementById('campo_observaciones').value.trim();
+
+  if(isNaN(oxigeno) || isNaN(temperatura) || isNaN(ph) || isNaN(conductividad)){
+    mostrarToast('Completa todos los campos num\u00e9ricos', 'error');
+    return;
+  }
+
+  const coords = puntoSeleccionado.geom && puntoSeleccionado.geom.coordinates;
+  const lat = coords ? coords[1] : null;
+  const lon = coords ? coords[0] : null;
+
+  try {
+    await api('reportes_campo', {
+      method: 'POST',
+      body: {
+        punto_monitoreo_gid: puntoSeleccionado.gid,
+        punto_monitoreo_nombre: puntoSeleccionado.name,
+        fecha_medicion: document.getElementById('campo_fecha').value || null,
+        hora_medicion: document.getElementById('campo_hora').value || null,
+        oxigeno_disuelto: oxigeno,
+        temperatura, ph, conductividad,
+        latitud: lat, longitud: lon,
+        ubicacion: (lat && lon) ? (lat.toFixed(5) + ', ' + lon.toFixed(5)) : null,
+        observaciones: observaciones || null
+      }
+    });
+    mostrarToast('Reporte guardado en ' + puntoSeleccionado.name, 'success');
+    cerrarModalReporte();
+    cargarReportes();
+  } catch(e){ mostrarToast('Error al guardar: ' + e.message, 'error'); }
+}
+
+async function cargarReportes(){
+  try {
+    const datos = await api('reportes_campo?select=*&order=fecha.desc&limit=50');
+    const ul = document.getElementById('ultimosReportes');
+    if(datos.length === 0){
+      ul.innerHTML = 'No hay reportes a\u00fan. Crea el primero.';
+    } else {
+      ul.innerHTML = datos.slice(0,8).map(r =>
+        '<div style="padding:7px 0;border-bottom:1px solid #e2e8f0;font-size:12px">' +
+        '<b>' + (r.punto_monitoreo_nombre || 'Punto #' + r.punto_monitoreo_gid) + '</b> ' +
+        '<span style="color:var(--text-light)">' + (r.fecha ? r.fecha.slice(0,10) : '') + '</span><br>' +
+        'OD:' + r.oxigeno_disuelto + ' | T:' + r.temperatura + '\u00b0C | pH:' + r.ph +
+        '</div>'
+      ).join('');
+    }
+
+    const grupo = overlays["Reportes de campo"];
+    grupo.clearLayers();
+
+    const features = datos.filter(r => r.latitud && r.longitud).map(r => ({
+      type: 'Feature',
+      properties: r,
+      geometry: {type: 'Point', coordinates: [parseFloat(r.longitud), parseFloat(r.latitud)]}
+    }));
+
+    if(features.length > 0){
+      L.geoJSON({type:'FeatureCollection', features}, {
+        pointToLayer: function(f, ll){
+          return L.circleMarker(ll, { radius: 6, fillColor: '#f59e0b', color: '#d97706', weight: 2, fillOpacity: 0.7 });
+        },
+        onEachFeature: function(f, layer){
+          const p = f.properties;
+          let html = '<b>' + (p.punto_monitoreo_nombre || 'Reporte') + '</b><hr style="margin:4px 0">';
+          html += '<b>OD:</b> ' + p.oxigeno_disuelto + ' mg/L<br>';
+          html += '<b>Temperatura:</b> ' + p.temperatura + ' \u00b0C<br>';
+          html += '<b>pH:</b> ' + p.ph + '<br>';
+          html += '<b>Conductividad:</b> ' + p.conductividad + ' \u00b5S/cm<br>';
+          if(p.observaciones) html += '<b>Obs:</b> ' + p.observaciones + '<br>';
+          html += '<i style="font-size:11px">' + (p.fecha ? p.fecha.slice(0,16).replace('T',' ') : '') + '</i>';
+          layer.bindPopup(html);
+        }
+      }).addTo(grupo);
+    }
+  } catch(e){
+    document.getElementById('ultimosReportes').innerHTML = 'Error al cargar reportes';
+    console.error(e);
+  }
+}
+
+cargarPuntosMonitoreo();
+cargarReportes();
